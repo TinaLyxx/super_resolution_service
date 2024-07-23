@@ -1,0 +1,233 @@
+service: super-resolution-service
+frameworkVersion: ">=2.0.0"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-plugin-scripts
+  - serverless-step-functions
+  - serverless-offline
+  - serverless-offline-lambda
+
+package:
+  exclude:
+    - .git/**
+    - .github/**
+    - package.json
+    - docs/**
+    - node_modules/**
+    - scripts/**
+    - tests/**
+    - venv/**
+
+provider:
+  name: aws
+  runtime: python3.10
+  region: ${self:custom.account.region}
+  stage: ${self:custom.account.stage}
+  architecture: ${opt:architecture, 'arm64'}
+  memorySize: 256
+  timeout: 180
+  logRetentionInDays: 14
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:custom.account.microservice_bucket}
+  environment:
+    SERVICE: ${self:service}
+    SERVICE_TYPE: "lambda"
+
+  # Add statements to the Lambda's IAM Role below
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:GetParameters
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:PutObjectAcl
+            - s3:DeleteObject
+            - s3:ListBucket
+          Resource: "arn:aws:s3:::*"
+
+functions:
+  request-generator:
+    handler: services/request_generator/handler.handler
+    environment:
+      POWERTOOLS_SERVICE_NAME: ${self:service}-request-generator
+
+  request-processor:
+    handler: services/request_processor/handler.handler
+    environment:
+      POWERTOOLS_SERVICE_NAME: ${self:service}-request-processor
+
+  optimizer:
+    handler: services/optimizer/handler.handler
+    environment:
+      POWERTOOLS_SERVICE_NAME: ${self:service}-optimizer
+
+  fargate-optimizer:
+    handler: services/fargate_optimizer/handler.handler
+    environment:
+      POWERTOOLS_SERVICE_NAME: ${self:service}-fargate-optimizer
+
+stepFunctions:
+  stateMachines:
+    TaskingOptimizerStateMachine:
+      name: ${self:service}-${self:provider.stage}
+      role:
+        Fn::GetAtt: ["StateMachineRole", "Arn"]
+      definition:
+        Comment: "A step function to optimize multiple tasking requests"
+        StartAt: RequestGenerator
+        States:
+          RequestGenerator:
+            Type: Task
+            Resource: "arn:aws:lambda:${self:provider.region}:${self:custom.account.id}:function:${self:service}-${self:provider.stage}-request-generator"
+            Next: RequestProcessor
+            Retry:
+              - ErrorEquals:
+                  - "Lambda.AWSLambdaException"
+                  - "Lambda.ClientExecutionTimeoutException"
+                  - "Lambda.SdkClientException"
+                  - "Lambda.ServiceException"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+              - ErrorEquals:
+                  - "States.ALL"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: ["States.TaskFailed"]
+                Next: OnError
+          RequestProcessor:
+            Type: Task
+            Resource: "arn:aws:lambda:${self:provider.region}:${self:custom.account.id}:function:${self:service}-${self:provider.stage}-request-processor"
+            Next: SelectOptimizer
+            Retry:
+              - ErrorEquals:
+                  - "Lambda.AWSLambdaException"
+                  - "Lambda.ClientExecutionTimeoutException"
+                  - "Lambda.SdkClientException"
+                  - "Lambda.ServiceException"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+              - ErrorEquals:
+                  - "States.ALL"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: ["States.TaskFailed"]
+                Next: OnError
+          SelectOptimizer:
+            Type: Choice
+            Choices:
+              - Variable: "$.useFargate"
+                BooleanEquals: true
+                Next: FargateOptimizer
+            Default: Optimizer
+          Optimizer:
+            Type: Task
+            Resource: "arn:aws:lambda:${self:provider.region}:${self:custom.account.id}:function:${self:service}-${self:provider.stage}-optimizer"
+            End: true
+            Retry:
+              - ErrorEquals:
+                  - "Lambda.AWSLambdaException"
+                  - "Lambda.ClientExecutionTimeoutException"
+                  - "Lambda.SdkClientException"
+                  - "Lambda.ServiceException"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+              - ErrorEquals:
+                  - "States.ALL"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: ["States.TaskFailed"]
+                Next: OnError
+          FargateOptimizer:
+            Type: Task
+            Resource: "arn:aws:lambda:${self:provider.region}:${self:custom.account.id}:function:${self:service}-${self:provider.stage}-fargate-optimizer"
+            End: true
+            Retry:
+              - ErrorEquals:
+                  - "Lambda.AWSLambdaException"
+                  - "Lambda.ClientExecutionTimeoutException"
+                  - "Lambda.SdkClientException"
+                  - "Lambda.ServiceException"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+              - ErrorEquals:
+                  - "States.ALL"
+                IntervalSeconds: 2
+                MaxAttempts: 6
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: ["States.TaskFailed"]
+                Next: OnError
+          OnError:
+            Type: "Fail"
+
+resources:
+  Resources:
+    StateMachineRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: TaskingOptimizerRole-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+        Policies:
+          - PolicyName: statePolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - sagemaker:CreateTransformJob
+                    - sagemaker:InvokeEndpoint
+                    - sagemaker:InvokeEndpointAsync
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - events:PutTargets
+                    - events:PutRule
+                    - events:DescribeRule
+                  Resource: "arn:aws:events:*:*:rule/StepFunctionsGetEventsForSageMakerTransformJobsRule"
+
+custom:
+  account:
+    id: ${env:ACCOUNT_ID}
+    region: ${env:AWS_REGION}
+    name: ${env:ACCOUNT_NAME}
+    stage: ${env:STAGE}
+    microservice_bucket: ${ssm:/storage/microservices/bucket_name}
+
+  pythonRequirements:
+    dockerImage: public.ecr.aws/sam/build-python3.10:latest
+    dockerizePip: non-linux
+    dockerSsh: true
+
+  scripts:
+    commands:
+      before_deploy: echo Starting ${self:service} deployment... && python3.10 -m pip install -r requirements.txt --upgrade -t ./
