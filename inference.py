@@ -122,13 +122,13 @@ def process_input(data):
     region = model_input["region"]
 
 
-    filename = key.split["/"][-1]
+    filename = key.split("/")[-1]
     local_path ="./tmp/"+ filename
     download_from_s3(local_path, bucket, key, region)
 
     images_path = generate_images(prompt, negative_prompt, height, width, num_inference_steps, guidance_scale, cosine_scale_1, cosine_scale_2, cosine_scale_3, sigma, view_batch_size, stride, seed, local_path)
 
-    return images_path
+    return images_path, model_input
 
 
 def process_output(model_input, images_path):
@@ -160,7 +160,7 @@ def handler(data, context):
         "image_input":
         "prompt":
         "negative_prompt":
-        "weight":
+        "width":
         "height":
         "num_inference_steps":
         "guidance_scale":
@@ -175,8 +175,8 @@ def handler(data, context):
 
    } 
    """
-   images_path = process_input(data)
-   response = process_output(images_path)
+   images_path, model_input = process_input(data)
+   response = process_output(model_input, images_path)
 
    return json.dumps(response, indent=2)
 
