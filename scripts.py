@@ -9,9 +9,9 @@ aws_region='us-west-2'
 sagemaker_client = boto3.client('sagemaker', region_name=aws_region)
 
 # Role to give SageMaker permission to access AWS services.
-sagemaker_role= "IAM: arn:aws:iam::573944535954:role/Super_Resolution"
+sagemaker_role= "arn:aws:iam::573944535954:role/Super_Resolution"
 
-ecr_image = ""
+ecr_image = "573944535954.dkr.ecr.us-west-2.amazonaws.com/super-resolution:latest"
 model_name = "superresolution-demofusion"
 
 create_model_response = sagemaker_client.create_model(
@@ -23,6 +23,7 @@ create_model_response = sagemaker_client.create_model(
             'SAGEMAKER_SUBMIT_DIRECTORY': '/opt/ml/code'
         }
     },
+    RepositoryAccessMode="Platform",
     ExecutionRoleArn = sagemaker_role
 )
 
@@ -34,7 +35,7 @@ create_endpoint_config_response = sagemaker_client.create_endpoint_config(
     ProductionVariants=[
         {
             "VariantName": "variant1", # The name of the production variant.
-            "ModelName": 'DemoFusion', 
+            "ModelName": model_name, 
             "InstanceType": "ml.g6.xlarge", # Specify the compute instance type.
             "InitialInstanceCount": 1 # Number of instances to launch initially.
         }

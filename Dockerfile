@@ -4,8 +4,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip git
 
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV SAGEMAKER_SUBMIT_DIRECTORY /opt/ml/code
+ENV SAGEMAKER_PROGRAM inference.py
 
 
 COPY ./requirements.txt ./
@@ -15,6 +15,5 @@ RUN pip3 install --upgrade pip && \
 COPY ./inference.py /opt/ml/code/inference.py
 COPY ./pipeline_demofusion_sdxl.py /opt/ml/code/pipeline_demofusion_sdxl.py
 
-ENV SAGEMAKER_PROGRAM inference.py
 
 ENTRYPOINT ["python", "/opt/ml/code/inference.py"]
