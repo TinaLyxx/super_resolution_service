@@ -1,75 +1,58 @@
 import boto3
 import json
+import sagemaker
+from sagemaker import Model
 
+sess = sagemaker.Session()
 
 # Specify your AWS Region
 aws_region='us-west-2'
-
-# Create a low-level SageMaker service client.
-sagemaker_client = boto3.client('sagemaker', region_name=aws_region)
 
 # Role to give SageMaker permission to access AWS services.
 sagemaker_role= "arn:aws:iam::573944535954:role/Super_Resolution"
 
 ecr_image = "573944535954.dkr.ecr.us-west-2.amazonaws.com/super-resolution:latest"
 model_name = "superresolution-demofusion"
-
-create_model_response = sagemaker_client.create_model(
-    ModelName=model_name,
-    PrimaryContainer={
-        'Image': ecr_image,
-        'Environment': {
-            'SAGEMAKER_PROGRAM': 'inference.py',
-            'SAGEMAKER_SUBMIT_DIRECTORY': '/opt/ml/code'
-        }
-    },
-    RepositoryAccessMode="Platform",
-    ExecutionRoleArn = sagemaker_role
-)
-
-# The name of the endpoint configuration associated with this endpoint.
-endpoint_config_name = "superresolution-demofusion-config"
-
-create_endpoint_config_response = sagemaker_client.create_endpoint_config(
-    EndpointConfigName=endpoint_config_name,
-    ProductionVariants=[
-        {
-            "VariantName": "variant1", # The name of the production variant.
-            "ModelName": model_name, 
-            "InstanceType": "ml.g6.xlarge", # Specify the compute instance type.
-            "InitialInstanceCount": 1 # Number of instances to launch initially.
-        }
-    ],
-    AsyncInferenceConfig={
-        "OutputConfig": {
-            # Location to upload response outputs when no location is provided in the request.
-            "S3OutputPath": "s3://test-aws-mybucket/results/"
-            },        
-        }
-)
-
-# The name of the endpoint.The name must be unique within an AWS Region in your AWS account.
+instance_type = "ml.g6.xlarge"
 endpoint_name = 'superresolution-demofusion' 
 
+estimator = Model(
+    name=model_name,
+    image_uri=ecr_image,
+    role=sagemaker_role,
+    source_dir="/opt/ml/code",
+    entry_point="inference.py",
+    sagemaker_session=sess
+)
 
+predictor = estimator.deploy(1, instance_type, endpoint_name=endpoint_name)
 
-create_endpoint_response = sagemaker_client.create_endpoint(
-                                            EndpointName=endpoint_name, 
-                                            EndpointConfigName=endpoint_config_name) 
+sm_client = sess.sagemaker_runtime_client
 
+payload = { 
+    "prompt": "a satellite image",
+    "negative_prompt": "blurry, ugly, duplicate, poorly drawn, deformed, mosaic",
+    "width": 2048,
+    "height": 2048,
+    "num_inference_steps": 50,
+    "guidance_scale": 7.5,
+    "cosine_scale_1": 3,
+    "cosine_scale_2": 1,
+    "cosine_scale_3": 1,
+    "sigma": 0.8,
+    "view_batch_size": 16,
+    "stride": 64,
+    "seed": 2013,
+    "bucket": "test-aws-mybucket",
+    "region": "us-west-2",
+    "key": "data/sample.png",
+}
+response = sm_client.invoke_endpoint(
+    EndpointName=endpoint_name,
+    ContentType="application/json",
+    Body=json.dumps(payload),
+)
 
-# Create a low-level client representing Amazon SageMaker Runtime
-sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=aws_region)
-
-# Specify the location of the input. Here, a single SVM sample
-input_location = "s3://test-aws-mybucket/data/"
-
-
-# After you deploy a model into production using SageMaker hosting 
-# services, your client applications use this API to get inferences 
-# from the model hosted at the specified endpoint.
-response = sagemaker_runtime.invoke_endpoint_async(
-                            EndpointName=endpoint_name, 
-                            InputLocation=input_location,
-                            InvocationTimeoutSeconds=3600)
+r = response["Body"]
+print("RESULT r.read().decode():", r.read().decode())
 

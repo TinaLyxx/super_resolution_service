@@ -7,9 +7,14 @@ from PIL import Image
 import os
 import json
 import boto3
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 PREVIEW_EXT = ["png", "jpeg", "jpg"]
 GEOTIFF_EXT = ["tiff", "tif", "geotiff"]
+JSON_CONTENT_TYPE = 'application/json'
 
 def load_and_process_image(pil_image):
     transform = transforms.Compose(
@@ -41,8 +46,10 @@ def pad_image(image):
         new_image.paste(image, (pad_w, 0))
         return new_image
 
+
 def generate_images(prompt, negative_prompt, height, width, num_inference_steps, guidance_scale, cosine_scale_1, cosine_scale_2, cosine_scale_3, sigma, view_batch_size, stride, seed, image_path):
     input_image = Image.open(image_path)
+    h, w = input_image.size
     padded_image = pad_image(input_image).resize((1024, 1024)).convert("RGB")
     image_lr = load_and_process_image(padded_image).to('cuda')
     vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
@@ -60,7 +67,20 @@ def generate_images(prompt, negative_prompt, height, width, num_inference_steps,
     for i, image in enumerate(images):
         image_path = './tmp/image_'+str(i)+'.png' 
         images_path.append(image_path)
-        image.save(image_path)
+        height, width = image.size
+        if w < h:
+            resize_w = int(w * (height / h))
+            edge = (width - resize_w) // 2
+            crop_area = (edge, 0, width-edge, height)
+            cropped_image = image.crop(crop_area)
+        elif w > h:
+            resize_h = int(h * (width / w))
+            edge = (height - resize_h) // 2
+            crop_area = (0, edge, width, height-edge)
+            cropped_image = image.crop(crop_area)
+        else:
+            cropped_image = image
+        cropped_image.save(image_path)
     pipe = None
     gc.collect()
     torch.cuda.empty_cache()
@@ -93,16 +113,8 @@ def upload_to_s3(file_path, bucket, key, region):
     print("S3 upload successful! \n")
 
 
-def process_input(data):
-    if not os.path.isdir("./tmp"):
-        os.mkdir("./tmp")
-
-    if isinstance(data, str):
-        model_input = json.loads(data)
-    else:
-        model_input = json.loads(data.read().decode("utf-8"))
-
-    print("Body:", model_input)
+def predict_fn(model_input, model=None):
+    logger.info(f'Got input Data: {model_input}')
 
     prompt = model_input["prompt"]
     negative_prompt = model_input["negative_prompt"]
@@ -128,14 +140,40 @@ def process_input(data):
 
     images_path = generate_images(prompt, negative_prompt, height, width, num_inference_steps, guidance_scale, cosine_scale_1, cosine_scale_2, cosine_scale_3, sigma, view_batch_size, stride, seed, local_path)
 
-    return images_path, model_input
+    prediction = {
+        "bucket": model_input["bucket"],
+        "region": model_input["region"],
+        "images_path": images_path,
+    }
+
+    return prediction
 
 
-def process_output(model_input, images_path):
+def input_fn(serialized_input_data, content_type=JSON_CONTENT_TYPE):
+    logger.info(f"serialized_input_data object: {serialized_input_data}")
+    if content_type == JSON_CONTENT_TYPE:
+        if not os.path.isdir("./tmp"):
+            os.mkdir("./tmp")
+
+        if isinstance(serialized_input_data, str):
+            model_input = json.loads(serialized_input_data)
+        else:
+            model_input = json.loads(serialized_input_data.read().decode("utf-8"))
+        logger.info(f"input_data object: {model_input}")
+        return model_input
+
+    else:
+        raise Exception('Requested unsupported ContentType in Accept: ' + content_type)
+        return
+
+
+def output_fn(prediction, content_type):
     response = {}
     response["predictions"] = []
-    bucket = model_input["bucket"]
-    region = model_input["region"]
+    bucket = prediction["bucket"]
+    region = prediction["region"]
+    images_path = prediction["images_path"]
+
     for image_path in images_path:
         image_name = image_path.split("/")[-1]
         key = 'results/' + image_name
@@ -149,35 +187,9 @@ def process_output(model_input, images_path):
             },
         }
         response["predictions"].append(single_response)
+
+    response = json.dumps(response)
     return response
 
-
-
-def handler(data, context):
-   """
-   data:
-   {
-        "image_input":
-        "prompt":
-        "negative_prompt":
-        "width":
-        "height":
-        "num_inference_steps":
-        "guidance_scale":
-        "cosine_scale_1":
-        "cosine_scale_2":
-        "cosine_scale_3":
-        "sigma":
-        "seed":
-        "bucket":
-        "region":
-        "key":
-
-   } 
-   """
-   images_path, model_input = process_input(data)
-   response = process_output(model_input, images_path)
-
-   return json.dumps(response, indent=2)
 
    
