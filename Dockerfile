@@ -10,7 +10,7 @@ ENV SAGEMAKER_PROGRAM inference.py
 
 COPY ./requirements.txt ./
 RUN pip3 install --upgrade pip && \
-    pip3 install -r requirements-dev.txt --no-cache-dir
+    pip3 install -r requirements.txt --no-cache-dir
 
 COPY ./inference.py /opt/ml/code/inference.py
 COPY ./pipeline_demofusion_sdxl.py /opt/ml/code/pipeline_demofusion_sdxl.py
