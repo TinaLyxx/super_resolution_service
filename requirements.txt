@@ -9,3 +9,5 @@ einops
 matplotlib
 gradio
 gradio_imageslider
+flask
+gunicorn
