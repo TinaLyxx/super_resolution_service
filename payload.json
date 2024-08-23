@@ -1,0 +1,18 @@
+{ 
+    "prompt": "a satellite image",
+    "negative_prompt": "blurry, ugly, duplicate, poorly drawn, deformed, mosaic",
+    "width": 2048,
+    "height": 2048,
+    "num_inference_steps": 50,
+    "guidance_scale": 7.5,
+    "cosine_scale_1": 3,
+    "cosine_scale_2": 1,
+    "cosine_scale_3": 1,
+    "sigma": 0.8,
+    "view_batch_size": 16,
+    "stride": 64,
+    "seed": 2013,
+    "bucket": "test-aws-mybucket",
+    "region": "us-west-2",
+    "key": "data/sample.png"
+}

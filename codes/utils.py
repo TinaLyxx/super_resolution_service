@@ -1,6 +1,6 @@
 
 from diffusers import AutoencoderKL
-from pipeline_demofusion_sdxl import DemoFusionSDXLPipeline
+from codes.pipeline_demofusion_sdxl import DemoFusionSDXLPipeline
 import torch, gc
 from torchvision import transforms
 from PIL import Image
@@ -99,8 +99,6 @@ def process_input(data):
 
     if isinstance(data, str):
         model_input = json.loads(data)
-    else:
-        model_input = json.loads(data.read().decode("utf-8"))
 
     print("Body:", model_input)
 
@@ -152,32 +150,3 @@ def process_output(model_input, images_path):
     return response
 
 
-
-def handler(data, context):
-   """
-   data:
-   {
-        "image_input":
-        "prompt":
-        "negative_prompt":
-        "width":
-        "height":
-        "num_inference_steps":
-        "guidance_scale":
-        "cosine_scale_1":
-        "cosine_scale_2":
-        "cosine_scale_3":
-        "sigma":
-        "seed":
-        "bucket":
-        "region":
-        "key":
-
-   } 
-   """
-   images_path, model_input = process_input(data)
-   response = process_output(model_input, images_path)
-
-   return json.dumps(response, indent=2)
-
-   
