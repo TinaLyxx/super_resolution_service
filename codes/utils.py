@@ -1,6 +1,6 @@
 
 from diffusers import AutoencoderKL
-from codes.pipeline_demofusion_sdxl import DemoFusionSDXLPipeline
+from pipeline_demofusion_sdxl import DemoFusionSDXLPipeline
 import torch, gc
 from torchvision import transforms
 from PIL import Image
@@ -43,10 +43,12 @@ def pad_image(image):
 
 def generate_images(prompt, negative_prompt, height, width, num_inference_steps, guidance_scale, cosine_scale_1, cosine_scale_2, cosine_scale_3, sigma, view_batch_size, stride, seed, image_path):
     input_image = Image.open(image_path)
+    w, h = input_image.size
     padded_image = pad_image(input_image).resize((1024, 1024)).convert("RGB")
     image_lr = load_and_process_image(padded_image).to('cuda')
     vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
     pipe = DemoFusionSDXLPipeline.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", vae=vae, torch_dtype=torch.float16)
+    print("Finish pretrained parameters loading!")
     pipe = pipe.to("cuda")
     generator = torch.Generator(device='cuda')
     generator = generator.manual_seed(int(seed))
@@ -60,7 +62,20 @@ def generate_images(prompt, negative_prompt, height, width, num_inference_steps,
     for i, image in enumerate(images):
         image_path = './tmp/image_'+str(i)+'.png' 
         images_path.append(image_path)
-        image.save(image_path)
+        height, width = image.size
+        if w < h:
+            resize_w = int(w * (height / h))
+            edge = (width - resize_w) // 2
+            crop_area = (edge, 0, width-edge, height)
+            cropped_image = image.crop(crop_area)
+        elif w > h:
+            resize_h = int(h * (width / w))
+            edge = (height - resize_h) // 2
+            crop_area = (0, edge, width, height-edge)
+            cropped_image = image.crop(crop_area)
+        else:
+            cropped_image = image
+        cropped_image.save(image_path)
     pipe = None
     gc.collect()
     torch.cuda.empty_cache()
@@ -75,8 +90,14 @@ def download_from_s3(file_path, bucket, key, region):
     s3 = boto3.client("s3", region_name=region)
 
     print("Downloading s3://{}/{} to {}...".format(bucket, key, file_path))
-    s3.download_file(bucket, key, file_path)
-    print("S3 download successful! \n")
+    try:
+        s3.download_file(bucket, key, file_path)
+        print("S3 download successful! \n")
+        return
+    except Exception as e:
+        error = "an error occurred:{}".format(e)
+        return error
+
 
 
 def upload_to_s3(file_path, bucket, key, region):
@@ -89,8 +110,15 @@ def upload_to_s3(file_path, bucket, key, region):
     else:
         content_type = "image/tiff"
     print("Uploading to s3://{}/{}...".format(bucket, key))
-    s3.upload_file(file_path, bucket, key, ExtraArgs={"ContentType": content_type})
-    print("S3 upload successful! \n")
+    try:
+        s3.upload_file(file_path, bucket, key, ExtraArgs={"ContentType": content_type})
+        print("S3 upload successful! \n")
+        return
+    except Exception as e:
+        error = "an error occurred:{}".format(e)
+        return error
+
+
 
 
 def process_input(data):
@@ -137,7 +165,9 @@ def process_output(model_input, images_path):
     for image_path in images_path:
         image_name = image_path.split("/")[-1]
         key = 'results/' + image_name
-        upload_to_s3(image_path, bucket, key, region)
+        message = upload_to_s3(image_path, bucket, key, region)
+        if message is not None:
+            return message
         single_response = {
             "image_s3_path" : {
                 "bucket" : bucket,

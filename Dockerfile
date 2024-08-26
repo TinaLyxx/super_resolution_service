@@ -1,7 +1,12 @@
 FROM pytorch/pytorch:2.4.0-cuda11.8-cudnn9-runtime
 
 RUN apt-get update && apt-get install -y \
-    python3-pip git
+    python3-pip \
+    git \
+    nginx \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 
 
 COPY ./requirements.txt ./
